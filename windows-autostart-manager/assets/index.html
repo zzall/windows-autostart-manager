@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>自启动管理台</title>
+<style>
+:root{--bg:#0f1420;--panel:#171e2e;--panel2:#1d2639;--tx:#dce4f2;--dim:#8494ad;--ok:#3ecf8e;--warn:#f5a623;--bad:#ef5b6b;--acc:#4d8dff;--line:#263049}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--tx);font:14px/1.55 "Microsoft YaHei",system-ui,sans-serif;padding:18px 22px 60px}
+h1{font-size:20px;margin-bottom:2px}
+.sub{color:var(--dim);font-size:12px;margin-bottom:14px}
+.tabs{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+.tab{padding:7px 16px;border-radius:8px;background:var(--panel);border:1px solid var(--line);cursor:pointer;color:var(--dim)}
+.tab.on{background:var(--acc);color:#fff;border-color:var(--acc)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:14px}
+.card h2{font-size:15px;margin-bottom:4px}
+.card .desc{color:var(--dim);font-size:12px;margin-bottom:10px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{color:var(--dim);text-align:left;font-weight:normal;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:hover td{background:var(--panel2)}
+.cmd{color:var(--dim);font-size:11px;word-break:break-all;max-width:360px}
+.badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;margin-right:4px}
+.b-run{background:#2b3f6b;color:#9fc1ff}.b-folder{background:#2f4a33;color:#9fdca8}.b-task{background:#5a4426;color:#ffd18a}.b-service{background:#4a2b52;color:#e2a9ff}.b-off{background:#3a2830;color:#f2a2ad}
+.tag{display:inline-block;padding:1px 8px;border-radius:4px;font-size:11px;margin:1px 3px 1px 0;background:#243049;color:#9db4d8;cursor:pointer}
+.tag.t-sys{background:#3d2b2b;color:#e0a0a0}.tag.t-drv{background:#33301f;color:#d8cf9a}.tag.t-3p{background:#1f3329;color:#9ad8b0}.tag.t-grp{background:#233152;color:#9fc1ff}
+.st-on{color:var(--ok)}.st-off{color:var(--bad)}
+button{background:var(--panel2);color:var(--tx);border:1px solid var(--line);border-radius:7px;padding:4px 10px;font-size:12px;cursor:pointer;margin:2px 2px 2px 0;white-space:nowrap}
+button:hover{border-color:var(--acc)}
+button.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+button.danger{color:var(--bad)}
+button.mini{padding:2px 8px;font-size:11px}
+select{background:var(--panel2);color:var(--tx);border:1px solid var(--line);border-radius:6px;padding:3px 6px;font-size:12px}
+.groupgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px}
+.gitem{display:flex;justify-content:space-between;align-items:center;gap:6px;padding:5px 8px;border-radius:7px;background:var(--panel2);font-size:12px;margin-bottom:5px}
+#toast{position:fixed;bottom:20px;right:20px;z-index:9}
+.tmsg{background:var(--panel2);border:1px solid var(--acc);padding:10px 16px;border-radius:9px;margin-top:8px;font-size:13px;box-shadow:0 4px 18px #0008;animation:fade 4s forwards}
+.tmsg.err{border-color:var(--bad)}
+@keyframes fade{0%,70%{opacity:1}100%{opacity:0;transform:translateY(8px)}}
+.pill{cursor:pointer;padding:3px 10px;border-radius:12px;border:1px solid var(--line);font-size:12px;margin-right:6px;color:var(--dim)}
+.pill.on{background:var(--acc);color:#fff;border-color:var(--acc)}
+.muted{color:var(--dim)}
+.count{font-size:12px;color:var(--dim);margin-left:8px}
+#mask{position:fixed;inset:0;background:#000a;z-index:10;display:none;align-items:center;justify-content:center}
+#box{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px 22px;max-width:460px;width:92%}
+#box h3{font-size:15px;margin-bottom:8px}
+#box .warn{color:var(--bad);font-size:13px;background:#2a1a20;border:1px solid #4a2530;border-radius:8px;padding:8px 10px;margin:8px 0}
+#box .info{color:var(--dim);font-size:13px;margin:8px 0}
+#box .row{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+</style>
+</head>
+<body>
+<h1>自启动管理台</h1>
+<div class="sub">本机 127.0.0.1:8788 · 数据来自注册表 Run 键 / 启动文件夹 / 计划任务 / Windows 服务实时扫描 · <span id="perm"></span></div>
+<div class="tabs">
+  <div class="tab on" data-v="suggest">智能梳理</div>
+  <div class="tab" data-v="groups">分组管理</div>
+  <div class="tab" data-v="all">全部项目</div>
+</div>
+<div id="view"></div>
+<div id="toast"></div>
+<div id="mask"><div id="box"></div></div>
+<script>
+let S={items:[],groups:{},disabledRun:{}};
+let filter='全部',tagFilter='全部';
+const $=s=>document.querySelector(s);
+async function refresh(){S=await (await fetch('/api/state')).json();render();
+  const el=$('#perm');
+  if(el)el.innerHTML=S.elevated?'<span class="st-on">● 管理员权限</span>':'<span style="color:var(--warn)">▲ 普通权限：计划任务/服务操作会被拒，请用"启动管理台.bat"以管理员身份重开</span>';
+}
+function toast(m,err){const d=document.createElement('div');d.className='tmsg'+(err?' err':'');d.textContent=m;$('#toast').appendChild(d);setTimeout(()=>d.remove(),4200);}
+async function act(body){
+  try{const r=await fetch('/api/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const j=await r.json();if(j.error)throw new Error(j.error);toast(j.msg||'完成');}
+  catch(e){toast('失败：'+e.message,true);}
+  refresh();
+}
+window.act=act;
+// —— 二次确认弹窗 ——
+let __cb=null;
+function confirmBox({title,info,warn,okText,onOk}){
+  $('#box').innerHTML=`<h3>${esc(title)}</h3>`+(info?`<div class="info">${info}</div>`:'')+(warn?`<div class="warn">⚠ ${warn}</div>`:'')+
+  `<div class="row"><button onclick="closeBox()">取消</button><button class="primary" id="okbtn">${esc(okText||'确认')}</button></div>`;
+  $('#okbtn').onclick=()=>{closeBox();onOk();};
+  $('#mask').style.display='flex';
+}
+function closeBox(){$('#mask').style.display='none';}
+window.closeBox=closeBox;
+// —— 通用渲染片段 ——
+function srcBadge(it){
+  const map={'run-user':['注册表·用户','b-run'],'run-machine':['注册表·机器','b-run'],'run-user-off':['注册表·已删','b-off'],'run-machine-off':['注册表·已删','b-off'],'startup-folder':['启动文件夹','b-folder'],'startup-folder-common':['启动文件夹·公共','b-folder'],'startup-folder-off':['启动夹·已移出','b-off'],'task':['计划任务','b-task'],'service':['服务','b-service'],'error':['错误','b-off']};
+  const m=map[it.source]||[it.source,'b-run'];return `<span class="badge ${m[1]}">${m[0]}</span>`;
+}
+function tagChips(it){
+  return (it.tags||[]).map(t=>{
+    const cls=t==='系统'?'t-sys':t==='驱动'?'t-drv':t==='第三方'?'t-3p':'';
+    return `<span class="tag ${cls}" onclick="tagFilter=${ja(t)};view='all';render()">${esc(t)}</span>`}).join('')+
+    (it.groupsOf||[]).map(g=>`<span class="tag t-grp" onclick="view='groups';render()">${esc(g)}</span>`).join('');
+}
+function isDisabledRun(it){return S.disabledRun && (S.disabledRun[it.source+'|'+it.name]!==undefined || S.disabledRun['run-user|'+it.name]!==undefined || S.disabledRun['run-machine|'+it.name]!==undefined);}
+function statusOf(it){
+  if(it.source==='service')return it.state==='Running'?'<span class="st-on">● 运行中</span>':'<span class="st-off">○ 已停止</span>';
+  let s;
+  if(it.source==='task')s=String(it.state)==='1'?'<span class="st-off">○ 已禁用</span>':(String(it.state)==='2'?'<span class="st-on">● 运行中</span>':'<span class="st-on">● 就绪</span>');
+  else if(it.source.endsWith('-off'))s='<span class="st-off">○ 已禁用/已删除</span>';
+  else if(isDisabledRun(it))s='<span class="st-off">○ 已禁用(有备份)</span>';
+  else s='<span class="st-on">● 已启用</span>';
+  if(it.source!=='service'&&it.source!=='error'&&!it.source.endsWith('-off'))
+    s+=`<div style="font-size:11px">${it.running?'<span class="st-on">▶ 进程运行中'+(it.pids&&it.pids.length>1?`(${it.pids.length})`:'')+'</span>':'<span class="muted">进程未运行</span>'}</div>`;
+  return s;
+}
+// —— 删除（二次确认）——
+function delItem(it){
+  const dlt={
+    'run-user':'将从注册表 HKCU Run 键删除该值（自动备份，可在此界面恢复）。',
+    'run-machine':'将从注册表 HKLM Run 键删除该值（自动备份，可恢复；需管理员）。',
+    'startup-folder':'快捷方式/脚本文件将移入回收站，可还原。',
+    'startup-folder-common':'公共启动夹中的文件将移入回收站（需管理员）。',
+    'startup-folder-off':'删除暂存夹中的这个文件（会进回收站）。',
+    'run-user-off':'删除本工具里的备份记录，之后将无法通过本工具恢复该自启项。',
+    'run-machine-off':'删除本工具里的备份记录，之后将无法通过本工具恢复该自启项。',
+    'task':'计划任务定义将被永久删除，不可恢复（程序本体不受影响）。',
+    'service':'服务注册将被永久删除（sc delete），程序文件保留，但相关软件功能可能异常，通常需要重装软件才能修复。'}[it.source]||'';
+  const irreversible=it.source==='task'||it.source==='service';
+  confirmBox({title:`删除「${esc(it.name)}」的自启动？`,info:esc(dlt),
+    warn:irreversible?'此操作不可恢复！建议先用"禁用"观察一段时间。':null,
+    okText:'确认删除',onOk:()=>act({op:'delete',source:it.source,name:it.name,file:it.file})});
+}
+window.delItem=delItem;
+// —— 标签编辑 ——
+function editTags(it){
+  const cur=(it.userTags||[]).join(',');
+  const v=prompt('输入标签（多个用逗号分隔，留空清除）：',cur);
+  if(v===null)return;
+  act({op:'set-tags',name:it.name,tags:v.split(/[,，]/).map(x=>x.trim()).filter(Boolean)});
+}
+window.editTags=editTags;
+// —— 分组操作（前端算好整表再保存）——
+function G(){const g=JSON.parse(JSON.stringify(S.groups||{}));return g;}
+async function saveG(g){await act({op:'save-groups',groups:g});}
+function createGroup(){
+  const n=prompt('新组名：');if(!n||!n.trim())return;
+  const g=G();if(g[n]){toast('组已存在',true);return;}
+  g[n.trim()]=[];saveG(g);
+}
+function renameGroup(old){
+  const n=prompt('重命名组：',old);if(!n||!n.trim()||n===old)return;
+  const g=G();if(g[n.trim()]){toast('目标名已存在',true);return;}
+  g[n.trim()]=g[old];delete g[old];
+  // 同步成员项的 groupsOf 由后端从 groups 计算，无需另存
+  saveG(g);
+}
+function deleteGroup(name){
+  confirmBox({title:`删除分组「${esc(name)}」？`,info:'只删除分组定义，不会取消组内项目的自启动。',okText:'确认删除',
+    onOk:()=>{const g=G();delete g[name];saveG(g);}});
+}
+function joinGroup(name,g){
+  if(!g)return;const gr=G();gr[g]=gr[g]||[];
+  if(!gr[g].includes(name))gr[g].push(name);saveG(gr);
+}
+function leaveGroup(g,name){const gr=G();gr[g]=(gr[g]||[]).filter(x=>x!==name);saveG(gr);}
+window.createGroup=createGroup;window.renameGroup=renameGroup;window.deleteGroup=deleteGroup;window.joinGroup=joinGroup;window.leaveGroup=leaveGroup;
+function groupSelect(it){
+  const gs=Object.keys(S.groups||{}).filter(g=>!(it.groupsOf||[]).includes(g));
+  if(!gs.length)return '';
+  return `<select onchange="joinGroup(${ja(it.name)},this.value)"><option value="">＋加入组</option>${gs.map(g=>`<option>${esc(g)}</option>`).join('')}</select>`;
+}
+// —— 行 ——
+function itemRow(it){
+  let btns='';
+  if(/-off$/.test(it.source)&&it.source.startsWith('run-')){
+    const base=it.source.replace('-off','');
+    btns=`<button class="primary" onclick="act({op:'run-enable',source:'${base}',name:${ja(it.name)}})">恢复自启</button>`;
+  } else if(it.source.startsWith('run-')){
+    btns = isDisabledRun(it)
+      ? `<button class="primary" onclick="act({op:'run-enable',source:'${it.source}',name:${ja(it.name)}})">恢复自启</button>`
+      : `<button onclick="act({op:'run-disable',source:'${it.source}',name:${ja(it.name)}})">禁用自启</button>`;
+  } else if(it.source==='startup-folder'){
+    btns = `<button onclick="act({op:'folder-disable',name:${ja(it.name)},file:${ja(it.file||it.name+'.lnk')}})">移出启动夹</button>`;
+  } else if(it.source==='startup-folder-common'){
+    btns = `<button onclick="act({op:'delete',source:'startup-folder-common',name:${ja(it.name)},file:${ja(it.file||it.name+'.lnk')})" title="移入回收站，需管理员">移出启动夹</button>`;
+  } else if(it.source==='startup-folder-off'){
+    btns = `<button class="primary" onclick="act({op:'folder-enable',name:${ja(it.name)},file:${ja(it.file||it.name)}})">放回启动夹</button>`;
+  } else if(it.source==='task'){
+    btns = String(it.state)==='1'
+      ? `<button class="primary" onclick="act({op:'task-enable',name:${ja(it.name)}})">启用</button>`
+      : `<button onclick="act({op:'task-disable',name:${ja(it.name)}})">禁用</button><button onclick="act({op:'task-run',name:${ja(it.name)}})">立即运行</button>`;
+  } else if(it.source==='service'){
+    btns = `<button onclick="act({op:'svc-start',name:${ja(it.name)}})">启动</button><button onclick="act({op:'svc-stop',name:${ja(it.name)}})">停止</button>` +
+      ['auto','delayed','manual','disabled'].map(m=>it.startType===m?'':`<button onclick="act({op:'svc-mode',name:${ja(it.name)},mode:'${m}'})">设${{auto:'自动',delayed:'自动(延迟)',manual:'手动(可选)',disabled:'禁用'}[m]}</button>`).join('');
+  }
+  if(it.source!=='error'){
+    btns+=` <button class="danger mini" onclick="delItem(window._it${it._i})">删除</button><button class="mini" onclick="editTags(window._it${it._i})">标签</button>${groupSelect(it)}`;
+  }
+  const launch = it.command && it.source!=='service' && it.source!=='error' && !it.source.endsWith('-off') && !isDisabledRun(it)
+    ? `<button class="primary" onclick="launchCmd(${ja(it.command)})">▶ 一键启动</button>` : '';
+  const stop = it.running && it.source!=='service' && it.source!=='error'
+    ? `<button class="danger" onclick="act({op:'stop',name:${ja(it.name)},command:${ja(it.command||'')}})">■ 停止进程</button>` : '';
+  return `<tr><td><b>${esc(it.name)}</b>${it.display&&it.display!==it.name?`<div class="muted" style="font-size:11px">${esc(it.display)}</div>`:''}<div style="margin-top:3px">${tagChips(it)}</div></td>
+  <td>${srcBadge(it)}${statusOf(it)}</td>
+  <td style="white-space:nowrap">${esc(it.startupType||'')}</td>
+  <td class="cmd">${esc((it.command||'').slice(0,140))}</td><td style="min-width:240px">${btns}${stop}${launch}</td></tr>`;
+}
+function withIdx(items){items.forEach((it,i)=>{it._i=i;window['_it'+i]=it;});return items;}
+function ja(x){return esc(JSON.stringify(x));}
+function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function launchCmd(cmd){act({op:'launch',command:cmd});}
+window.launchCmd=launchCmd;
+// —— 智能梳理 ——
+const SUG={
+ aggregate:{title:'① 建议聚合：同场景打包，一键同开同关',desc:'这些是你的工作流/服务，零散自启。已按场景预分成三个组，去"分组管理"页整组操作或自行建组。'},
+ optional:{title:'② 建议改成可选（手动/按需）',desc:'第三方常驻程序或服务，不必每天开机自启；改为手动后需要时点"一键启动"即可。'},
+ oneclick:{title:'③ 可以直接一键启动（关掉自启也没事）',desc:'偶尔用的工具类程序：建议禁用自启，用时在下方或"分组管理"里点击启动。'},
+ keep:{title:'④ 保持现状，别动',desc:'系统组件、驱动服务、输入法框架等，动了会出问题。'},
+};
+function guess(it){
+  const n=(it.name+' '+(it.command||'')).toLowerCase();
+  if(it.source==='service'){
+    if(/nvidia|nvcontainer|driverstore|intel|rst|jhi|wmi|windows defender|security health/.test(n))return 'keep';
+    if(/tailscale|wsl|docker|123sync|gameviewer/.test(n))return 'aggregate';
+    return 'optional';
+  }
+  if(/ctfmon|securityhealth|rtkngui|ace-tray|systemcore/.test(n))return 'keep';
+  if(/book-server|watchdog|frpc|tailscale|docker|openclaw|freellm|123sync|gameviewer|cosyvoice|utools|quicker|everything/.test(n))return 'aggregate';
+  if(/doubao|ximalaya|wps|douyin|chengxun|ssrun|wifi|checkin|人行|银联|sogou|typeless|搜狗/.test(n))return 'optional';
+  return 'oneclick';
+}
+const THEAD='<tr><th>名称 / 标签</th><th>来源·状态</th><th>启动类型</th><th>命令</th><th>操作</th></tr>';
+function renderSuggest(){
+  const buckets={aggregate:[],optional:[],oneclick:[],keep:[]};
+  for(const it of S.items){
+    if(it.source==='service'&&it.startType!=='Auto')continue;
+    if(it.source==='error'){buckets.optional.push(it);continue;}
+    buckets[it.suggestion||guess(it)].push(it);
+  }
+  return Object.entries(SUG).map(([k,c])=>{
+    const list=buckets[k];if(!list.length)return '';
+    return `<div class="card"><h2>${c.title} <span class="count">${list.length} 项</span></h2><div class="desc">${c.desc}</div>
+    <table>${THEAD}${withIdx(list).map(itemRow).join('')}</table></div>`;
+  }).join('');
+}
+// —— 分组管理 ——
+function groupMembers(gname){
+  const ms=(S.groups||{})[gname]||[];
+  return S.items.filter(it=>ms.includes(it.name)||it.group===gname);
+}
+function renderGroups(){
+  const names=Object.keys(S.groups||{});
+  let html=`<div class="card"><h2>聚合组 <span class="count">${names.length} 个组</span></h2><div class="desc">每组可整组一键启动；可新建、重命名、删除组，成员从全部项目里通过"＋加入组"添加。组定义保存在 config.json。</div>
+  <button class="primary" onclick="createGroup()">＋ 新建组</button>
+  <div class="groupgrid" style="margin-top:12px">`;
+  for(const g of names){
+    const ms=groupMembers(g);
+    html+=`<div class="card" style="margin:0"><h2>${esc(g)} <span class="count">${ms.length} 项</span></h2>
+    <button class="primary" onclick="launchGroup(${ja(g)})">⚡ 一键启动整组</button>
+    <button class="mini" onclick="renameGroup(${ja(g)})">重命名</button>
+    <button class="mini danger" onclick="deleteGroup(${ja(g)})">删除组</button>
+    <div style="margin-top:8px">${ms.map(it=>`<div class="gitem"><span>${esc(it.name)} ${statusOf(it)}</span><span>${it.command&&it.source!=='service'?`<button class="mini" onclick="launchCmd(${ja(it.command)})">启动</button>`:''}${it.source==='service'?`<button class="mini" onclick="act({op:'svc-start',name:${ja(it.name)}})">启动</button>`:''}${it.running&&it.source!=='service'?`<button class="mini danger" onclick="act({op:'stop',name:${ja(it.name)},command:${ja(it.command||'')}})">停止</button>`:''}${it.running&&it.source==='service'?`<button class="mini danger" onclick="act({op:'svc-stop',name:${ja(it.name)}})">停止</button>`:''}<button class="mini danger" onclick="leaveGroup(${ja(g)},${ja(it.name)})">移出</button></span></div>`).join('')||'<div class="muted">（无成员，去"全部项目"用 ＋加入组 添加）</div>'}</div></div>`;
+  }
+  html+='</div></div>';
+  return html;
+}
+async function launchGroup(g){
+  const ms=groupMembers(g);
+  toast(`正在启动「${g}」${ms.length} 项…`);
+  for(const it of ms){
+    try{
+      if(it.source==='service')await act({op:'svc-start',name:it.name});
+      else if(it.command)await act({op:'launch',command:it.command});
+    }catch(e){}
+  }
+}
+window.launchGroup=launchGroup;
+// —— 全部项目 ——
+function renderAll(){
+  const srcs=['全部','run-user','run-machine','startup-folder','startup-folder-common','task','service'];
+  const label={'全部':'全部','run-user':'注册表(用户)','run-machine':'注册表(机器)','startup-folder':'启动文件夹','startup-folder-common':'启动文件夹(公共)','task':'计划任务','service':'服务'};
+  const allTags=['全部',...new Set(S.items.flatMap(i=>i.tags||[]))];
+  const tabs=srcs.map(s=>`<span class="pill ${filter===s?'on':''}" onclick="filter=${ja(s)};render()">${label[s]}</span>`).join('');
+  const tags=allTags.map(t=>`<span class="pill ${tagFilter===t?'on':''}" onclick="tagFilter=${ja(t)};render()">${esc(t)}</span>`).join('');
+  const list=S.items.filter(it=>(filter==='全部'||it.source===filter)&&(tagFilter==='全部'||(it.tags||[]).includes(tagFilter)));
+  return `<div class="card"><h2>全部自启动项 <span class="count">${list.length} / ${S.items.length} 项</span></h2>
+  <div style="margin:8px 0">${tabs}</div><div style="margin:0 0 8px">标签：${tags}</div>
+  <table>${THEAD}${withIdx(list).map(itemRow).join('')}</table></div>`;
+}
+let view='suggest';
+function render(){
+  $('#view').innerHTML = view==='suggest'?renderSuggest():view==='groups'?renderGroups():renderAll();
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.v===view));
+}
+document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{view=t.dataset.v;render();});
+refresh();
+</script>
+</body>
+</html>
