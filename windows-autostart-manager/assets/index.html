@@ -41,6 +41,10 @@ select{background:var(--panel2);color:var(--tx);border:1px solid var(--line);bor
 .pill.on{background:var(--acc);color:#fff;border-color:var(--acc)}
 .muted{color:var(--dim)}
 .count{font-size:12px;color:var(--dim);margin-left:8px}
+.loading{padding:60px 20px;text-align:center;color:var(--dim);font-size:14px}
+.spin{width:30px;height:30px;margin:0 auto 14px;border:3px solid var(--line);border-top-color:var(--acc);border-radius:50%;animation:sp 0.9s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.scan-tip{font-size:12px;color:var(--acc)}
 #mask{position:fixed;inset:0;background:#000a;z-index:10;display:none;align-items:center;justify-content:center}
 #box{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px 22px;max-width:460px;width:92%}
 #box h3{font-size:15px;margin-bottom:8px}
@@ -51,13 +55,13 @@ select{background:var(--panel2);color:var(--tx);border:1px solid var(--line);bor
 </head>
 <body>
 <h1>自启动管理台</h1>
-<div class="sub">本机 127.0.0.1:28788 · 数据来自注册表 Run 键 / 启动文件夹 / 计划任务 / Windows 服务实时扫描 · <span id="perm"></span></div>
+<div class="sub">本机 <span id="host">127.0.0.1</span> · 数据来自注册表 Run 键 / 启动文件夹 / 计划任务 / Windows 服务实时扫描 · <span id="perm"></span></div>
 <div class="tabs">
   <div class="tab on" data-v="suggest">智能梳理</div>
   <div class="tab" data-v="groups">分组管理</div>
   <div class="tab" data-v="all">全部项目</div>
 </div>
-<div id="view"></div>
+<div id="view"><div class="loading"><div class="spin"></div>首次扫描中，约需 5～10 秒…<div style="font-size:12px;margin-top:6px">正在读取注册表、启动文件夹、计划任务与 Windows 服务</div></div></div>
 <div id="toast"></div>
 <div id="mask"><div id="box"></div></div>
 <script>
@@ -67,6 +71,7 @@ const maskCmd=s=>{s=String(s||'');return s.length<=8?'＊＊＊＊':esc(s.slice(
 let filter='全部',tagFilter='全部';
 const $=s=>document.querySelector(s);
 async function refresh(){
+  const pe=$('#perm'); if(pe&&S.items.length)pe.innerHTML='<span class="scan-tip">⟳ 重新扫描中…</span>';
   let S2;
   try{S2=await (await fetch('/api/state')).json();}catch(e){$('#perm').innerHTML='<span style="color:var(--warn)">服务正在以管理员身份重启…授权 UAC 后 3 秒刷新本页</span>';return;}
   S=S2;render();
@@ -296,6 +301,7 @@ function render(){
     confirmBox({title:'删除「搜狗语音输入法」的自启动？',info:'将从注册表 HKCU Run 键删除该值（自动备份，可在此界面恢复）。',warn:null,okText:'确认删除',onOk:()=>{}});}
 }
 document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{view=t.dataset.v;render();});
+$('#host').textContent=location.host;
 refresh();
 </script>
 </body>
