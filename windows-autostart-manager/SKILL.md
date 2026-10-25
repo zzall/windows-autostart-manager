@@ -23,6 +23,30 @@ description: Windows 自启动管理台——启动本地网页界面管理开�
 
 用户要求关闭时：找到监听 28788-28808 的 node/powershell 进程并结束（`netstat -ano` 取 PID → `taskkill /PID x /F`）。配置与备份保留在 `%APPDATA%\windows-autostart-manager\`。
 
+## 对话操作（不开界面也能干活）
+
+后端就绪后，你可以直接用 HTTP API 替用户操作，用户一句话即可完成，无需打开网页：
+
+- `GET /api/state` — 返回全部自启动项（含来源 source、启动类型 startupType、标签 tags、是否运行 running、进程 pids、分组 groupsOf、权限 elevated）
+- `POST /api/action` — JSON body 按 op 执行：
+
+| op | 参数 | 作用 |
+|---|---|---|
+| run-disable / run-enable | source,name | 禁用/恢复注册表自启（自动备份，可恢复） |
+| folder-disable / folder-enable | name,file | 移出/放回启动文件夹 |
+| task-disable / task-enable / task-run | name | 计划任务开关与触发（需管理员） |
+| svc-mode | name,mode(auto/delayed/manual/disabled) | 改服务启动类型（需管理员） |
+| svc-start / svc-stop | name | 启停服务（需管理员） |
+| launch | command | 一键启动某项 |
+| stop | name,command | 按命令行特征停止该项进程（含子进程树） |
+| delete | source,name,file | 删除（注册表项先备份；文件进回收站；任务/服务需 advanced） |
+| set-tags / save-groups / save-meta | 见接口 | 标签、分组、分类持久化 |
+| relaunch-elevated | 无 | 弹 UAC，以管理员身份重启服务并接管端口 |
+
+典型对话："我电脑都自启了什么"→ 拉 state 汇总分类汇报；"把豆包自启关了"→ run-disable；"把开发组全拉起来"→ 遍历 groups 成员逐个 launch/svc-start。
+
+操作守则：禁用/恢复/启停可直接执行并报告结果；**delete 一律先向用户复述对象与后果、得到确认再调**；遇 elevated=false 且操作被拒时，引导用户点页面按钮或调 relaunch-elevated。
+
 ## 安全须知（必须遵守）
 
 - 永久删除计划任务/服务默认被后端拒绝，需用户自行把 config.json 的 `advanced` 改为 `true` 才放开。用户提出"删除任务/服务"且被拒时，向用户解释此开关，不要替用户打开。
