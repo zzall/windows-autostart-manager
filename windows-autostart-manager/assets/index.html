@@ -38,6 +38,7 @@ select{background:var(--panel2);color:var(--tx);border:1px solid var(--line);bor
 .tmsg{background:var(--panel2);border:1px solid var(--acc);padding:10px 16px;border-radius:9px;margin-top:8px;font-size:13px;box-shadow:0 4px 18px #0008;animation:fade 4s forwards}
 .tmsg.err{border-color:var(--bad)}
 @keyframes fade{0%,70%{opacity:1}100%{opacity:0;transform:translateY(8px)}}
+.scanbar{display:flex;gap:10px;align-items:center;font-size:12px;margin-bottom:12px;color:var(--dim)}
 .pill{cursor:pointer;padding:3px 10px;border-radius:12px;border:1px solid var(--line);font-size:12px;margin-right:6px;color:var(--dim)}
 .pill.on{background:var(--acc);color:#fff;border-color:var(--acc)}
 .muted{color:var(--dim)}
@@ -57,6 +58,7 @@ select{background:var(--panel2);color:var(--tx);border:1px solid var(--line);bor
 <body>
 <h1>自启动管理台</h1>
 <div class="sub">本机 <span id="host">127.0.0.1</span> · 数据来自注册表 Run 键 / 启动文件夹 / 计划任务 / Windows 服务实时扫描 · <span id="perm"></span></div>
+<div class="scanbar"><span id="scaninfo" class="muted">正在加载…</span><button class="mini" onclick="manualScan()">⟳ 立即扫描</button><select id="ttlsel" onchange="setTtl(this.value)"><option value="30">每 30 分钟自动重扫</option><option value="120">每 2 小时自动重扫</option><option value="360">每 6 小时自动重扫</option><option value="1440">每 24 小时自动重扫</option><option value="0">从不（仅手动扫描）</option></select></div>
 <div class="tabs">
   <div class="tab on" data-v="suggest">智能梳理</div>
   <div class="tab" data-v="groups">分组管理</div>
@@ -76,8 +78,9 @@ function renderProg(a){
   return '<div class="loading"><div class="spin"></div>正在扫描，完成一项亮一项…<div style="margin-top:16px;display:inline-block;text-align:left;font-size:13px">'+
     a.map(x=>`<div style="padding:4px 0">${ic(x.state)} ${esc(x.label)}${x.state==='done'?`　<b style="color:var(--ok)">${x.count||0} 项</b>`:''}</div>`).join('')+'</div></div>';
 }
-async function refresh(){
-  const pe=$('#perm'); if(pe&&S.items.length)pe.innerHTML='<span class="scan-tip">⟳ 重新扫描中…</span>';
+async function refresh(fresh){
+  const pe=$('#perm'); if(pe&&S.items.length)pe.innerHTML='<span class="scan-tip">⟳ 扫描中…</span>';
+  const si=$('#scaninfo'); if(si&&S.items.length)si.textContent='扫描中，请稍候…';
   const timer=setInterval(async()=>{
     if(S.items.length)return;
     if(document.querySelector('#view table'))return;
@@ -86,17 +89,26 @@ async function refresh(){
   let S2;
   try{
     for(let i=0;i<60;i++){
-      const r=await fetch('/api/state');
+      const r=await fetch('/api/state'+(fresh?'?fresh=1':''));
       if(r.status===202){await new Promise(s=>setTimeout(s,700));continue}
       S2=await r.json();break;
     }
   }catch(e){clearInterval(timer);$('#perm').innerHTML='<span style="color:var(--warn)">服务正在以管理员身份重启…授权 UAC 后 3 秒刷新本页</span>';return}
   clearInterval(timer);
-  if(!S2){$('#perm').innerHTML='<span style="color:var(--bad)">扫描超时，请刷新页面重试</span>';return}
-  S=S2;render();
+  if(!S2){$('#perm').innerHTML='<span style="color:var(--bad)">扫描超时，请点"立即扫描"重试</span>';return}
+  S=S2;render();updScanBar();
   const el=$('#perm');
   if(el)el.innerHTML=S.elevated?'<span class="st-on">● 管理员权限</span>':'<span style="color:var(--warn)">▲ 普通权限：计划任务/服务操作会被拒</span> <button class="mini" onclick="act({op:\'relaunch-elevated\'})">申请管理员权限（弹一次UAC）</button>';
 }
+function fmtAgo(ts){const s=Math.round((Date.now()-ts)/1000);if(s<60)return s+' 秒前';if(s<3600)return Math.round(s/60)+' 分钟前';return Math.round(s/3600)+' 小时前'}
+function updScanBar(){
+  const si=$('#scaninfo');if(si)si.textContent=S.scanTime?('上次扫描 '+new Date(S.scanTime).toLocaleTimeString()+'（'+fmtAgo(S.scanTime)+'）'+(S.cached?' · 缓存结果，未重新扫描':' · 本次实时扫描')):'尚未扫描';
+  const sel=$('#ttlsel');if(sel&&S.ttlMinutes!==undefined)sel.value=String(S.ttlMinutes);
+}
+async function manualScan(){await refresh(true)}
+async function setTtl(v){await act({op:'set-ttl',minutes:Number(v)});}
+window.manualScan=manualScan;window.setTtl=setTtl;
+setInterval(()=>{ if(S.scanTime&&S.ttlMinutes>0&&Date.now()-S.scanTime>S.ttlMinutes*60000)refresh(false); },30000);
 function toast(m,err){const d=document.createElement('div');d.className='tmsg'+(err?' err':'');d.textContent=m;$('#toast').appendChild(d);setTimeout(()=>d.remove(),4200);}
 async function act(body){
   try{const r=await fetch('/api/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});

@@ -11,7 +11,20 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const UI_FILE = path.join(ROOT, '..', 'assets', 'index.html');
 const DATA_DIR = path.join(process.env.APPDATA || ROOT, 'windows-autostart-manager');
 const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
-const DEFAULT_CFG = { groups: {}, meta: {}, disabledRun: {}, advanced: false };
+const DEFAULT_CFG = { groups: {}, meta: {}, disabledRun: {}, advanced: false, scanTtl: 120 };
+const CACHE_FILE = path.join(DATA_DIR, 'cache.json');
+
+function saveConfig(cfg) { globalThis.__scanP = null; try { if (existsSync(CACHE_FILE)) writeFileSync(CACHE_FILE, '{}'); } catch (e) {} writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2), 'utf8'); }
+function readCache(ttlMin) {
+  if (ttlMin <= 0 || !existsSync(CACHE_FILE)) return null;
+  try {
+    const c = JSON.parse(readFileSync(CACHE_FILE, 'utf8').replace(/^\uFEFF/, ''));
+    if (!c || !c.ts || !c.data) return null;
+    if (Date.now() - c.ts > ttlMin * 60000) return null;
+    return c;
+  } catch (e) { return null; }
+}
+function writeCache(data) { try { writeFileSync(CACHE_FILE, JSON.stringify({ ts: Date.now(), data })); } catch (e) {} }
 
 const PS = 'powershell.exe';
 async function ps(script) {
@@ -27,7 +40,6 @@ function loadConfig() {
   if (!existsSync(CONFIG_FILE)) writeFileSync(CONFIG_FILE, JSON.stringify(DEFAULT_CFG, null, 2), 'utf8');
   return JSON.parse(readFileSync(CONFIG_FILE, 'utf8').replace(/^﻿/, '') || '{}');
 }
-function saveConfig(cfg) { globalThis.__scanP = null; writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2), 'utf8'); }
 
 // ---------- 进程匹配 ----------
 let PROCS = [];
@@ -136,6 +148,7 @@ async function scan() {
   } catch (e) { items.push({ id: 'error:task', source: 'error', name: '扫描计划任务失败', command: String(e).slice(0, 200) }); }
   stage('tasks', '计划任务', 'done', items.filter(i => i.source === 'task').length);
   stage('procs', '进程运行状态', 'run');
+  { const seen = new Set(); for (let i = items.length - 1; i >= 0; i--) { const k = items[i].source + '|' + items[i].name + '|' + (items[i].command || ''); if (seen.has(k)) items.splice(i, 1); else seen.add(k); } }
 
   let elevated = false;
   try { elevated = (await ps(`([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)`)).trim() === 'True'; } catch (e) {}
@@ -279,6 +292,10 @@ async function actions(body) {
     setTimeout(() => process.exit(0), 4000);
     return { ok: true, msg: '新实例正在以管理员身份接管端口，3 秒后刷新页面即可。' };
   }
+  if (op === 'set-ttl') {
+    cfg.scanTtl = Number(body.minutes) || 120;
+    saveConfig(cfg); return { ok: true, msg: `自动重扫间隔已设为 ${cfg.scanTtl} 分钟` };
+  }
   if (op === 'set-tags') {
     cfg.meta = cfg.meta || {};
     cfg.meta[body.name] = { ...(cfg.meta[body.name] || {}), tags: body.tags };
@@ -304,9 +321,19 @@ async function handle(req, res) {
       return res.end(JSON.stringify(globalThis.PROGRESS));
     }
     if (url.pathname === '/api/state') {
+      const ttl = (() => { try { return loadConfig().scanTtl ?? 120; } catch (e) { return 120; } })();
+      const fresh = url.searchParams.get('fresh') === '1';
+      if (!fresh) {
+        const c = readCache(ttl);
+        if (c) {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          return res.end(JSON.stringify({ ...c.data, cached: true, scanTime: c.ts, ttlMinutes: ttl }));
+        }
+      }
       const data = await (globalThis.__scanP || (globalThis.__scanP = scan().finally(() => { const p = globalThis.__scanP; setTimeout(() => { if (globalThis.__scanP === p) globalThis.__scanP = null; }, 50); })).catch(e => { globalThis.__scanP = null; throw e; }));
+      writeCache(data);
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
-      return res.end(JSON.stringify(data));
+      return res.end(JSON.stringify({ ...data, cached: false, scanTime: Date.now(), ttlMinutes: ttl }));
     }
     if (url.pathname === '/api/action' && req.method === 'POST') {
       let buf = ''; req.on('data', d => buf += d);

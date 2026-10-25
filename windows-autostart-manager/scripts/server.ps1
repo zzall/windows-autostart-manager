@@ -20,7 +20,7 @@ if (-not (Test-Path $ConfigFile)) {
   '{"groups":{},"meta":{},"disabledRun":{},"advanced":false}' | Set-Content $ConfigFile -Encoding UTF8
 }
 function Load-Cfg { (Get-Content $ConfigFile -Raw -Encoding UTF8).TrimStart([char]0xFEFF) | ConvertFrom-Json }
-function Save-Cfg($c) { $c | ConvertTo-Json -Depth 12 | Set-Content $ConfigFile -Encoding UTF8 }
+function Save-Cfg($c) { $c | ConvertTo-Json -Depth 12 | Set-Content $ConfigFile -Encoding UTF8; Remove-Item (Join-Path $env:TEMP 'wam-cache.json'), (Join-Path $env:TEMP 'wam-scan.json') -Force -ErrorAction SilentlyContinue }
 
 $RunKeyUser = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $RunKeyMach = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Run'
@@ -117,6 +117,9 @@ function Get-State {
   # processes + elevation
   Stage 'tasks' '计划任务' 'done' (@($items | Where-Object { $_.source -eq 'task' }).Count)
   Stage 'procs' '进程运行状态' 'run'
+  $u = @(); $seen = @{}
+  foreach ($it in $items) { $k = "$($it.source)|$($it.name)|$($it.command)"; if (-not $seen.ContainsKey($k)) { $seen[$k] = 1; $u += $it } }
+  $items = New-Object System.Collections.ArrayList; foreach ($x in $u) { [void]$items.Add($x) }
   $procs = @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, CommandLine)
   $selfSet = New-Object 'System.Collections.Generic.HashSet[int]'
   [void]$selfSet.Add($PID)
@@ -275,6 +278,11 @@ function Invoke-Action($body) {
       Start-Sleep -Milliseconds 300
       return @{ ok = $true; msg = '新实例正在以管理员身份接管端口，3 秒后刷新页面即可。' }
     }
+    'set-ttl' {
+      $cfg | Add-Member -Force NoteProperty scanTtl ([int]$body.minutes)
+      Save-Cfg $cfg
+      return @{ ok = $true; msg = "自动重扫间隔已设为 $($body.minutes) 分钟" }
+    }
     'set-tags' {
       if (-not $cfg.meta) { $cfg | Add-Member -Force NoteProperty meta ([pscustomobject]@{}) }
       $old = $cfg.meta.($body.name)
@@ -347,16 +355,33 @@ while ($listener.IsListening) {
       $bytes = [Text.Encoding]::UTF8.GetBytes($txt)
       $res.ContentType = 'application/json; charset=utf-8'
     } elseif ($path -eq '/api/state') {
-      if (Test-Path $ScanOut) {
-        $txt = [IO.File]::ReadAllText($ScanOut); Remove-Item $ScanOut -Force
-        $bytes = [Text.Encoding]::UTF8.GetBytes($txt)
-      } elseif ($Global:ScanProc -and -not $Global:ScanProc.HasExited) {
-        $res.StatusCode = 202; $bytes = [Text.Encoding]::UTF8.GetBytes('{}')
-      } else {
-        Remove-Item $ScanProg -Force -ErrorAction SilentlyContinue
-        $Global:ScanProc = Start-Process powershell -PassThru -WindowStyle Hidden -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath, '-Scan', '-ProgFile', $ScanProg, '-OutFile', $ScanOut
-        $res.StatusCode = 202; $bytes = [Text.Encoding]::UTF8.GetBytes('{}')
+      $ttlMin = 120; try { $tv = (Load-Cfg).scanTtl; if ($null -ne $tv) { $ttlMin = [int]$tv } } catch {}
+      $freshQ = ([string]$req.Url.Query) -match 'fresh=1'
+      $cacheFile = Join-Path $env:TEMP 'wam-cache.json'
+      $txt = $null
+      if (-not $freshQ -and $ttlMin -gt 0 -and (Test-Path $cacheFile)) {
+        try {
+          $c = [IO.File]::ReadAllText($cacheFile) | ConvertFrom-Json
+          if ([DateTimeOffset]::FromUnixTimeMilliseconds([long]$c.ts) -gt (Get-Date).ToUniversalTime().AddMinutes(-$ttlMin)) {
+            $txt = $c.json.TrimEnd('}', ' ', [char]13, [char]10) + ',"cached":true,"scanTime":' + $c.ts + ',"ttlMinutes":' + $ttlMin + '}'
+          }
+        } catch {}
       }
+      if (-not $txt) {
+        if (Test-Path $ScanOut) {
+          $raw = [IO.File]::ReadAllText($ScanOut); Remove-Item $ScanOut -Force
+          $ts = [DateTimeOffset]::Now.ToUnixTimeMilliseconds()
+          try { @{ ts = $ts; json = $raw } | ConvertTo-Json -Compress | Set-Content $cacheFile -Encoding UTF8 } catch {}
+          $txt = $raw.TrimEnd('}', ' ', [char]13, [char]10) + ',"cached":false,"scanTime":' + $ts + ',"ttlMinutes":' + $ttlMin + '}'
+        } elseif ($Global:ScanProc -and -not $Global:ScanProc.HasExited) {
+          $res.StatusCode = 202; $txt = '{}'
+        } else {
+          Remove-Item $ScanProg -Force -ErrorAction SilentlyContinue
+          $Global:ScanProc = Start-Process powershell -PassThru -WindowStyle Hidden -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath, '-Scan', '-ProgFile', $ScanProg, '-OutFile', $ScanOut
+          $res.StatusCode = 202; $txt = '{}'
+        }
+      }
+      $bytes = [Text.Encoding]::UTF8.GetBytes($txt)
       $res.ContentType = 'application/json; charset=utf-8'
     } elseif ($path -eq '/api/action' -and $req.HttpMethod -eq 'POST') {
       $reader = New-Object IO.StreamReader($req.InputStream, [Text.Encoding]::UTF8)
