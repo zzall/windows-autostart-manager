@@ -27,7 +27,7 @@ function loadConfig() {
   if (!existsSync(CONFIG_FILE)) writeFileSync(CONFIG_FILE, JSON.stringify(DEFAULT_CFG, null, 2), 'utf8');
   return JSON.parse(readFileSync(CONFIG_FILE, 'utf8').replace(/^﻿/, '') || '{}');
 }
-function saveConfig(cfg) { writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2), 'utf8'); }
+function saveConfig(cfg) { globalThis.__scanP = null; writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2), 'utf8'); }
 
 // ---------- 进程匹配 ----------
 let PROCS = [];
@@ -54,6 +54,7 @@ function matchPids(it) {
     const { script, exe } = targets(it.command || '');
     const key = script || exe;
     if (!key) return [];
+    if (!script && /^(powershell|cmd|wscript|cscript|bash|sh|conhost|explorer).exe$/i.test(key)) return [];
     nk = norm(key); base = nk.split('\\').pop();
     tail2 = nk.split('\\').slice(-2).join('\\');
     byName = !script && !!exe && exe.includes('\\');

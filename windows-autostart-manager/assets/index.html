@@ -32,7 +32,8 @@ button.danger{color:var(--bad)}
 button.mini{padding:2px 8px;font-size:11px}
 select{background:var(--panel2);color:var(--tx);border:1px solid var(--line);border-radius:6px;padding:3px 6px;font-size:12px}
 .groupgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px}
-.gitem{display:flex;justify-content:space-between;align-items:center;gap:6px;padding:5px 8px;border-radius:7px;background:var(--panel2);font-size:12px;margin-bottom:5px}
+.gitem{display:flex;justify-content:space-between;align-items:center;gap:6px;padding:5px 8px;border-radius:7px;background:var(--panel2);font-size:12px;margin-bottom:5px;cursor:grab}
+.gcard.drop{outline:2px dashed var(--acc);outline-offset:-2px;background:#1a2438}
 #toast{position:fixed;bottom:20px;right:20px;z-index:9}
 .tmsg{background:var(--panel2);border:1px solid var(--acc);padding:10px 16px;border-radius:9px;margin-top:8px;font-size:13px;box-shadow:0 4px 18px #0008;animation:fade 4s forwards}
 .tmsg.err{border-color:var(--bad)}
@@ -187,6 +188,19 @@ function joinGroup(name,g){
   if(!gr[g].includes(name))gr[g].push(name);saveG(gr);
 }
 function leaveGroup(g,name){const gr=G();gr[g]=(gr[g]||[]).filter(x=>x!==name);saveG(gr);}
+// —— 拖拽换组 ——
+function dragStart(ev,g,name){ev.dataTransfer.setData('text/plain',JSON.stringify({g,name}));ev.dataTransfer.effectAllowed='move';}
+function dragOver(ev){ev.preventDefault();ev.dataTransfer.dropEffect='move';ev.currentTarget.classList.add('drop');}
+function dragLeave(ev){ev.currentTarget.classList.remove('drop');}
+function onDrop(ev,g){
+  ev.preventDefault();ev.currentTarget.classList.remove('drop');
+  try{const d=JSON.parse(ev.dataTransfer.getData('text/plain'));if(!d||d.g===g)return;moveMember(d.g,g,d.name);}catch(e){}
+}
+async function moveMember(from,to,name){
+  const gr=G();gr[from]=(gr[from]||[]).filter(x=>x!==name);gr[to]=[...(gr[to]||[]),name];
+  await act({op:'save-groups',groups:gr});
+}
+window.dragStart=dragStart;window.dragOver=dragOver;window.dragLeave=dragLeave;window.onDrop=onDrop;window.moveMember=moveMember;
 window.createGroup=createGroup;window.renameGroup=renameGroup;window.deleteGroup=deleteGroup;window.joinGroup=joinGroup;window.leaveGroup=leaveGroup;
 function groupSelect(it){
   const gs=Object.keys(S.groups||{}).filter(g=>!(it.groupsOf||[]).includes(g));
@@ -214,14 +228,16 @@ function itemRow(it){
       ? `<button class="primary" onclick="act({op:'task-enable',name:${ja(it.name)}})">启用</button>`
       : `<button onclick="act({op:'task-disable',name:${ja(it.name)}})">禁用</button><button onclick="act({op:'task-run',name:${ja(it.name)}})">立即运行</button>`;
   } else if(it.source==='service'){
-    btns = `<button onclick="act({op:'svc-start',name:${ja(it.name)}})">启动</button><button onclick="act({op:'svc-stop',name:${ja(it.name)}})">停止</button>` +
+    btns = (it.state==='Running'
+      ? `<button class="danger" onclick="act({op:'svc-stop',name:${ja(it.name)}})">停止进程</button>`
+      : `<button class="primary" onclick="act({op:'svc-start',name:${ja(it.name)}})">启动进程</button>`) +
       ['auto','delayed','manual','disabled'].map(m=>it.startType===m?'':`<button onclick="act({op:'svc-mode',name:${ja(it.name)},mode:'${m}'})">设${{auto:'自动',delayed:'自动(延迟)',manual:'手动(可选)',disabled:'禁用'}[m]}</button>`).join('');
   }
   if(it.source!=='error'){
     btns+=` <button class="danger mini" onclick="delItem(window._it${it._i})">删除</button><button class="mini" onclick="editTags(window._it${it._i})">标签</button>${groupSelect(it)}`;
   }
-  const launch = it.command && it.source!=='service' && it.source!=='error' && !it.source.endsWith('-off') && !isDisabledRun(it)
-    ? `<button class="primary" onclick="launchCmd(${ja(it.command)})">▶ 一键启动</button>` : '';
+  const launch = it.command && it.source!=='service' && it.source!=='error' && !it.source.endsWith('-off') && !isDisabledRun(it) && !it.running
+    ? `<button class="primary" onclick="launchCmd(${ja(it.command)})">▶ 启动进程</button>` : '';
   const stop = it.running && it.source!=='service' && it.source!=='error'
     ? `<button class="danger" onclick="act({op:'stop',name:${ja(it.name)},command:${ja(it.command||'')}})">■ 停止进程</button>` : '';
   return `<tr><td><b>${esc(it.name)}</b>${it.display&&it.display!==it.name?`<div class="muted" style="font-size:11px">${esc(it.display)}</div>`:''}<div style="margin-top:3px">${tagChips(it)}</div></td>
@@ -236,8 +252,8 @@ function launchCmd(cmd){act({op:'launch',command:cmd});}
 window.launchCmd=launchCmd;
 // —— 智能梳理 ——
 const SUG={
- aggregate:{title:'① 建议聚合：同场景打包，一键同开同关',desc:'这些是你的工作流/服务，零散自启。已按场景预分成三个组，去"分组管理"页整组操作或自行建组。'},
- optional:{title:'② 建议改成可选（手动/按需）',desc:'第三方常驻程序或服务，不必每天开机自启；改为手动后需要时点"一键启动"即可。'},
+ aggregate:{title:'① 建议聚合：同场景打包，一键同开同关',desc:'这些是你的工作流/服务，零散自启。已按场景预分成三个组，去"分组管理"页整组操作或自行建组。按钮对应关系：● 已启用=开机自启开着；▶ 启动进程=此刻没在跑，点了就跑；■ 停止进程=此刻在跑，点了就停。'},
+ optional:{title:'② 建议改成可选（手动/按需）',desc:'第三方常驻程序或服务，不必每天开机自启；改为手动后需要时点"启动进程"即可。'},
  oneclick:{title:'③ 可以直接一键启动（关掉自启也没事）',desc:'偶尔用的工具类程序：建议禁用自启，用时在下方或"分组管理"里点击启动。'},
  keep:{title:'④ 保持现状，别动',desc:'系统组件、驱动服务、输入法框架等，动了会出问题。'},
 };
@@ -274,16 +290,18 @@ function groupMembers(gname){
 }
 function renderGroups(){
   const names=Object.keys(S.groups||{});
-  let html=`<div class="card"><h2>聚合组 <span class="count">${names.length} 个组</span></h2><div class="desc">每组可整组一键启动；可新建、重命名、删除组，成员从全部项目里通过"＋加入组"添加。组定义保存在 config.json。</div>
+  let html=`<div class="card"><h2>聚合组 <span class="count">${names.length} 个组</span></h2><div class="desc">每组可整组一键启动；可新建、重命名、删除组。<b>成员卡片可直接拖到别的组</b>换组。两状态说明：<span class="st-on">● 已启用/已禁用</span>=开机自启开关；<span class="st-on">▶ 进程运行中</span>=此刻是否在跑——互相独立，禁用自启不影响现在手动启动。<br>组定义保存在 config.json。</div>
   <button class="primary" onclick="createGroup()">＋ 新建组</button>
   <div class="groupgrid" style="margin-top:12px">`;
   for(const g of names){
     const ms=groupMembers(g);
-    html+=`<div class="card" style="margin:0"><h2>${esc(g)} <span class="count">${ms.length} 项</span></h2>
+    html+=`<div class="card gcard" style="margin:0" ondragover="dragOver(event)" ondragleave="dragLeave(event)" ondrop="onDrop(event,${ja(g)})"><h2>${esc(g)} <span class="count">${ms.length} 项</span></h2>
     <button class="primary" onclick="launchGroup(${ja(g)})">⚡ 一键启动整组</button>
     <button class="mini" onclick="renameGroup(${ja(g)})">重命名</button>
     <button class="mini danger" onclick="deleteGroup(${ja(g)})">删除组</button>
-    <div style="margin-top:8px">${ms.map(it=>`<div class="gitem"><span>${esc(it.name)} ${statusOf(it)}</span><span>${it.command&&it.source!=='service'?`<button class="mini" onclick="launchCmd(${ja(it.command)})">启动</button>`:''}${it.source==='service'?`<button class="mini" onclick="act({op:'svc-start',name:${ja(it.name)}})">启动</button>`:''}${it.running&&it.source!=='service'?`<button class="mini danger" onclick="act({op:'stop',name:${ja(it.name)},command:${ja(it.command||'')}})">停止</button>`:''}${it.running&&it.source==='service'?`<button class="mini danger" onclick="act({op:'svc-stop',name:${ja(it.name)}})">停止</button>`:''}<button class="mini danger" onclick="leaveGroup(${ja(g)},${ja(it.name)})">移出</button></span></div>`).join('')||'<div class="muted">（无成员，去"全部项目"用 ＋加入组 添加）</div>'}</div></div>`;
+    <div style="margin-top:8px">${ms.map(it=>`<div class="gitem" draggable="true" ondragstart="dragStart(event,${ja(g)},${ja(it.name)})"><span>${esc(it.name)} ${statusOf(it)}</span><span>${it.running?(it.source==='service'?`<button class="mini danger" onclick="act({op:'svc-stop',name:${ja(it.name)}})">停止</button>`:`<button class="mini danger" onclick="act({op:'stop',name:${ja(it.name)},command:${ja(it.command||'')}})">停止</button>`)
+      :(it.source==='service'?`<button class="mini" onclick="act({op:'svc-start',name:${ja(it.name)}})">启动</button>`
+      :it.command?`<button class="mini" onclick="launchCmd(${ja(it.command)})">启动</button>`:'')}<button class="mini danger" onclick="leaveGroup(${ja(g)},${ja(it.name)})">移出</button></span></div>`).join('')||'<div class="muted">（无成员，可直接从别的组拖卡片进来，或去"全部项目"用 ＋加入组）</div>'}</div></div>`;
   }
   html+='</div></div>';
   return html;
