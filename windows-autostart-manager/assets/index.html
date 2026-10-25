@@ -51,7 +51,7 @@ select{background:var(--panel2);color:var(--tx);border:1px solid var(--line);bor
 </head>
 <body>
 <h1>自启动管理台</h1>
-<div class="sub">本机 127.0.0.1:8788 · 数据来自注册表 Run 键 / 启动文件夹 / 计划任务 / Windows 服务实时扫描 · <span id="perm"></span></div>
+<div class="sub">本机 127.0.0.1:28788 · 数据来自注册表 Run 键 / 启动文件夹 / 计划任务 / Windows 服务实时扫描 · <span id="perm"></span></div>
 <div class="tabs">
   <div class="tab on" data-v="suggest">智能梳理</div>
   <div class="tab" data-v="groups">分组管理</div>
@@ -64,9 +64,12 @@ select{background:var(--panel2);color:var(--tx);border:1px solid var(--line);bor
 let S={items:[],groups:{},disabledRun:{}};
 let filter='全部',tagFilter='全部';
 const $=s=>document.querySelector(s);
-async function refresh(){S=await (await fetch('/api/state')).json();render();
+async function refresh(){
+  let S2;
+  try{S2=await (await fetch('/api/state')).json();}catch(e){$('#perm').innerHTML='<span style="color:var(--warn)">服务正在以管理员身份重启…授权 UAC 后 3 秒刷新本页</span>';return;}
+  S=S2;render();
   const el=$('#perm');
-  if(el)el.innerHTML=S.elevated?'<span class="st-on">● 管理员权限</span>':'<span style="color:var(--warn)">▲ 普通权限：计划任务/服务操作会被拒，请用"启动管理台.bat"以管理员身份重开</span>';
+  if(el)el.innerHTML=S.elevated?'<span class="st-on">● 管理员权限</span>':'<span style="color:var(--warn)">▲ 普通权限：计划任务/服务操作会被拒</span> <button class="mini" onclick="act({op:\'relaunch-elevated\'})">申请管理员权限（弹一次UAC）</button>';
 }
 function toast(m,err){const d=document.createElement('div');d.className='tmsg'+(err?' err':'');d.textContent=m;$('#toast').appendChild(d);setTimeout(()=>d.remove(),4200);}
 async function act(body){

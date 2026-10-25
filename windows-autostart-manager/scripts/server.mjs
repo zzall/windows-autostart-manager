@@ -256,6 +256,13 @@ async function actions(body) {
     }
     throw new Error('该来源不支持删除: ' + s);
   }
+  if (op === 'relaunch-elevated') {
+    const args = [path.join(ROOT, 'server.mjs'), '--takeover', String(process.pid)];
+    const spawned = await ps(`Start-Process -FilePath ${q(process.execPath)} -ArgumentList ${args.map(a => q(a)).join(',')} -Verb RunAs -WindowStyle Hidden; "OK"`).then(() => true).catch(() => false);
+    if (!spawned) throw new Error('UAC 被取消或提权失败，当前实例继续以普通权限运行');
+    setTimeout(() => process.exit(0), 4000);
+    return { ok: true, msg: '新实例正在以管理员身份接管端口，3 秒后刷新页面即可。' };
+  }
   if (op === 'set-tags') {
     cfg.meta = cfg.meta || {};
     cfg.meta[body.name] = { ...(cfg.meta[body.name] || {}), tags: body.tags };
@@ -271,7 +278,7 @@ async function actions(body) {
 }
 
 // ---------- HTTP ----------
-const server = http.createServer(async (req, res) => {
+async function handle(req, res) {
   const url = new URL(req.url, 'http://localhost');
   res.setHeader('Access-Control-Allow-Origin', '*');
   try {
@@ -293,14 +300,20 @@ const server = http.createServer(async (req, res) => {
     res.statusCode = 500; res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.end(JSON.stringify({ error: String(e.message || e).slice(0, 500) }));
   }
-});
-let port = 0;
-async function listen(p) {
-  return new Promise((resolve, reject) => {
-    const s = server.listen(p, '127.0.0.1', () => resolve(p));
-    s.once('error', e => { s.close(); e.code === 'EADDRINUSE' ? reject(e) : reject(e); });
-  });
 }
-for (const p of [8788, 8789, 8790, 8791, 8792]) { try { port = await listen(p); break; } catch (e) {} }
-if (!port) { console.log('ERROR: 端口 8788-8792 都被占用'); process.exit(1); }
-console.log('OK windows-autostart-manager http://127.0.0.1:' + port + '/');
+{
+  const ti = process.argv.indexOf('--takeover');
+  if (ti > -1) {
+    const old = parseInt(process.argv[ti + 1], 10);
+    if (old && old !== process.pid) { try { process.kill(old); } catch (e) {} }
+    await new Promise(r => setTimeout(r, 700));
+  }
+}
+for (const p of Array.from({ length: 21 }, (_, i) => 28788 + i)) {
+  const s = http.createServer(handle);
+  try {
+    await new Promise((resolve, reject) => { s.once('error', reject); s.listen({ port: p, host: '127.0.0.1', reuseAddr: true }, resolve); });
+    console.log('OK windows-autostart-manager http://127.0.0.1:' + p + '/');
+    break;
+  } catch (e) { s.close(); }
+}

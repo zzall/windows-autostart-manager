@@ -250,6 +250,12 @@ function Invoke-Action($body) {
         default { throw "该来源不支持删除: $s" }
       }
     }
+    'relaunch-elevated' {
+      $self = Join-Path $PSScriptRoot 'server.ps1'
+      Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File',$self,'--takeover',"$PID" -Verb RunAs
+      Start-Sleep -Milliseconds 300
+      return @{ ok = $true; msg = '新实例正在以管理员身份接管端口，3 秒后刷新页面即可。' }
+    }
     'set-tags' {
       if (-not $cfg.meta) { $cfg | Add-Member -Force NoteProperty meta ([pscustomobject]@{}) }
       $old = $cfg.meta.($body.name)
@@ -280,16 +286,20 @@ function Invoke-Action($body) {
 }
 
 # ---------- HTTP ----------
+if ($args.Count -ge 2 -and $args[0] -eq '--takeover') {
+  try { Stop-Process -Id ([int]$args[1]) -Force -ErrorAction SilentlyContinue } catch {}
+  Start-Sleep -Milliseconds 700
+}
 $listener = $null
 $port = 0
-foreach ($p in 8788..8792) {
+foreach ($p in 28788..28808) {
   try {
     $l = New-Object System.Net.HttpListener
     $l.Prefixes.Add("http://127.0.0.1:$p/")
     $l.Start(); $listener = $l; $port = $p; break
   } catch {}
 }
-if (-not $listener) { Write-Output 'ERROR: 端口 8788-8792 都被占用'; exit 1 }
+if (-not $listener) { Write-Output 'ERROR: 端口 28788-28808 都被占用'; exit 1 }
 Write-Output "OK windows-autostart-manager http://127.0.0.1:$port/"
 while ($listener.IsListening) {
   $ctx = $listener.GetContext()
