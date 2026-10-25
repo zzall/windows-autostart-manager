@@ -68,7 +68,7 @@ function Get-State {
     foreach ($sc in (Get-CimInstance Win32_StartupCommand)) {
       $loc = '' + $sc.Location; $source = 'other'
       if ($loc -match 'HKU|HKCU') { $source = 'run-user' }
-      elseif ($loc -match 'HKLM') { $source = 'run-machine' }
+      elseif ($loc -match 'HKLM') { $source = if ($loc -match 'WOW6432Node') { 'run-machine-wow' } else { 'run-machine' } }
       elseif ($loc -eq 'Startup') { $source = 'startup-folder' }
       elseif ($loc -eq 'Common Startup') { $source = 'startup-folder-common' }
       [void]$items.Add([ordered]@{ id = "$source$($sc.Name)"; source = $source; name = '' + $sc.Name; command = '' + $sc.Command })
@@ -117,9 +117,6 @@ function Get-State {
   # processes + elevation
   Stage 'tasks' '计划任务' 'done' (@($items | Where-Object { $_.source -eq 'task' }).Count)
   Stage 'procs' '进程运行状态' 'run'
-  $u = @(); $seen = @{}
-  foreach ($it in $items) { $k = "$($it.source)|$($it.name)|$($it.command)"; if (-not $seen.ContainsKey($k)) { $seen[$k] = 1; $u += $it } }
-  $items = New-Object System.Collections.ArrayList; foreach ($x in $u) { [void]$items.Add($x) }
   $procs = @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, CommandLine)
   $selfSet = New-Object 'System.Collections.Generic.HashSet[int]'
   [void]$selfSet.Add($PID)
@@ -170,7 +167,7 @@ function Invoke-Action($body) {
   function RunPs($script) { Invoke-Expression $script }
   switch ($op) {
     'run-disable' {
-      $key = if ($body.source -eq 'run-machine') { $RunKeyMach } else { $RunKeyUser }
+      $key = switch ($body.source) { 'run-machine' { $RunKeyMach } 'run-machine-wow' { $RunKeyMachWow } default { $RunKeyUser } }
       $val = ''
       if (Test-Path $key) { $val = (Get-Item $key).GetValue([string]$body.name) }
       if (-not $val) { throw '注册表中找不到该值' }
@@ -181,7 +178,7 @@ function Invoke-Action($body) {
       return @{ ok = $true; msg = "已禁用并备份：$($body.name)" }
     }
     'run-enable' {
-      $key = if ($body.source -eq 'run-machine') { $RunKeyMach } else { $RunKeyUser }
+      $key = switch ($body.source) { 'run-machine' { $RunKeyMach } 'run-machine-wow' { $RunKeyMachWow } default { $RunKeyUser } }
       $pname = "$($body.source)|$($body.name)"
       $saved = $cfg.disabledRun.$pname
       if (-not $saved) { throw '没有备份记录，无法恢复' }
@@ -238,7 +235,7 @@ function Invoke-Action($body) {
       }
       switch ($s) {
         { $_ -in 'run-user', 'run-machine' } {
-          $key = if ($s -eq 'run-machine') { $RunKeyMach } else { $RunKeyUser }
+          $key = switch ($s) { 'run-machine' { $RunKeyMach } 'run-machine-wow' { $RunKeyMachWow } default { $RunKeyUser } }
           $val = if (Test-Path $key) { (Get-Item $key).GetValue([string]$body.name) } else { '' }
           if (-not $val) { throw '注册表中找不到该值' }
           if (-not $cfg.disabledRun) { $cfg | Add-Member -Force NoteProperty disabledRun ([pscustomobject]@{}) }

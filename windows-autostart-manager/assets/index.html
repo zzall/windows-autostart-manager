@@ -129,7 +129,7 @@ function closeBox(){$('#mask').style.display='none';}
 window.closeBox=closeBox;
 // —— 通用渲染片段 ——
 function srcBadge(it){
-  const map={'run-user':['注册表·用户','b-run'],'run-machine':['注册表·机器','b-run'],'run-user-off':['注册表·已删','b-off'],'run-machine-off':['注册表·已删','b-off'],'startup-folder':['启动文件夹','b-folder'],'startup-folder-common':['启动文件夹·公共','b-folder'],'startup-folder-off':['启动夹·已移出','b-off'],'task':['计划任务','b-task'],'service':['服务','b-service'],'error':['错误','b-off']};
+  const map={'run-user':['注册表·用户','b-run'],'run-machine':['注册表·机器','b-run'],'run-machine-wow':['注册表·机器32位','b-run'],'run-user-off':['注册表·已删','b-off'],'run-machine-off':['注册表·已删','b-off'],'run-machine-wow-off':['注册表·已删','b-off'],'startup-folder':['启动文件夹','b-folder'],'startup-folder-common':['启动文件夹·公共','b-folder'],'startup-folder-off':['启动夹·已移出','b-off'],'task':['计划任务','b-task'],'service':['服务','b-service'],'error':['错误','b-off']};
   const m=map[it.source]||[it.source,'b-run'];return `<span class="badge ${m[1]}">${m[0]}</span>`;
 }
 function tagChips(it){
@@ -331,8 +331,8 @@ async function launchGroup(g){
 window.launchGroup=launchGroup;
 // —— 全部项目 ——
 function renderAll(){
-  const srcs=['全部','run-user','run-machine','startup-folder','startup-folder-common','task','service'];
-  const label={'全部':'全部','run-user':'注册表(用户)','run-machine':'注册表(机器)','startup-folder':'启动文件夹','startup-folder-common':'启动文件夹(公共)','task':'计划任务','service':'服务'};
+  const srcs=['全部','run-user','run-machine','run-machine-wow','startup-folder','startup-folder-common','task','service'];
+  const label={'全部':'全部','run-user':'注册表(用户)','run-machine':'注册表(机器)','run-machine-wow':'注册表(机器32位)','startup-folder':'启动文件夹','startup-folder-common':'启动文件夹(公共)','task':'计划任务','service':'服务'};
   const allTags=['全部',...new Set(S.items.flatMap(i=>i.tags||[]))];
   const tabs=srcs.map(s=>`<span class="pill ${filter===s?'on':''}" onclick="filter=${ja(s)};render()">${label[s]}</span>`).join('');
   const tags=allTags.map(t=>`<span class="pill ${tagFilter===t?'on':''}" onclick="tagFilter=${ja(t)};render()">${esc(t)}</span>`).join('');

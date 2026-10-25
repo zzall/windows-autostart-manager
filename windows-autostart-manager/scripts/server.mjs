@@ -83,6 +83,8 @@ function matchPids(it) {
 // ---------- 扫描 ----------
 const RUN_KEY = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
 const RUN_KEY_HKLM = 'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
+const RUN_KEY_HKLM_WOW = 'HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Run';
+function runKeyOf(source) { return source === 'run-machine' ? RUN_KEY_HKLM : source === 'run-machine-wow' ? RUN_KEY_HKLM_WOW : RUN_KEY; }
 const STARTUP_DIR = process.env.APPDATA + '\\Microsoft\\Windows\\Start Menu\\Programs\\Startup';
 const STARTUP_OFF = path.join(STARTUP_DIR, '_已关闭自启');
 
@@ -103,7 +105,7 @@ async function scan() {
       const loc = it.Location || '';
       let source = 'other';
       if (/HKU|HKCU/.test(loc)) source = 'run-user';
-      else if (/HKLM/.test(loc)) source = 'run-machine';
+      else if (/HKLM/.test(loc)) source = /WOW6432Node/i.test(loc) ? 'run-machine-wow' : 'run-machine';
       else if (loc === 'Startup') source = 'startup-folder';
       else if (loc === 'Common Startup') source = 'startup-folder-common';
       items.push({ id: `${source}:${it.Name}`, source, name: it.Name, command: it.Command });
@@ -148,7 +150,6 @@ async function scan() {
   } catch (e) { items.push({ id: 'error:task', source: 'error', name: '扫描计划任务失败', command: String(e).slice(0, 200) }); }
   stage('tasks', '计划任务', 'done', items.filter(i => i.source === 'task').length);
   stage('procs', '进程运行状态', 'run');
-  { const seen = new Set(); for (let i = items.length - 1; i >= 0; i--) { const k = items[i].source + '|' + items[i].name + '|' + (items[i].command || ''); if (seen.has(k)) items.splice(i, 1); else seen.add(k); } }
 
   let elevated = false;
   try { elevated = (await ps(`([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)`)).trim() === 'True'; } catch (e) {}
@@ -189,7 +190,7 @@ async function actions(body) {
   const cfg = loadConfig();
   const op = body.op;
   if (op === 'run-disable') {
-    const key = body.source === 'run-machine' ? RUN_KEY_HKLM : RUN_KEY;
+    const key = runKeyOf(body.source);
     const cur = await ps(`if(Test-Path ${q(key)}){ (Get-Item ${q(key)}).GetValue(${q(body.name)}) }`);
     const val = cur.trim();
     if (!val) throw new Error('注册表中找不到该值');
@@ -200,7 +201,7 @@ async function actions(body) {
     return { ok: true, msg: `已禁用并备份：${body.name}` };
   }
   if (op === 'run-enable') {
-    const key = body.source === 'run-machine' ? RUN_KEY_HKLM : RUN_KEY;
+    const key = runKeyOf(body.source);
     const saved = (cfg.disabledRun || {})[`${body.source}|${body.name}`];
     if (!saved) throw new Error('没有备份记录，无法恢复');
     await ps(`New-ItemProperty -Path ${q(key)} -Name ${q(body.name)} -Value ${q(saved)} -PropertyType String -Force | Out-Null`);
@@ -248,7 +249,7 @@ async function actions(body) {
     if ((s === 'task' || s === 'service') && cfg.advanced !== true)
       throw new Error('永久删除计划任务/服务属于高危操作：请先在配置文件的 advanced 字段开启高级模式（' + CONFIG_FILE + '）');
     if (s === 'run-user' || s === 'run-machine') {
-      const key = s === 'run-machine' ? RUN_KEY_HKLM : RUN_KEY;
+      const key = runKeyOf(s);
       const cur = await ps(`if(Test-Path ${q(key)}){ (Get-Item ${q(key)}).GetValue(${q(body.name)}) }`);
       const val = cur.trim();
       if (!val) throw new Error('注册表中找不到该值');
