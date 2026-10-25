@@ -1,7 +1,17 @@
 ﻿# windows-autostart-manager - PowerShell backend (no dependencies, Windows 10/11 built-in)
 # Same HTTP API as server.mjs. Run: powershell -NoProfile -ExecutionPolicy Bypass -File server.ps1
+param([switch]$Scan, [string]$ProgFile, [string]$OutFile)
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
+
+$script:PROGA = @()
+function Stage([string]$key, [string]$label, [string]$state, [int]$count = -1) {
+  $s = $script:PROGA | Where-Object { $_.key -eq $key } | Select-Object -First 1
+  if (-not $s) { $s = [ordered]@{ key = $key; label = $label; state = $state }; $script:PROGA += , $s }
+  else { $s.state = $state }
+  if ($count -ge 0) { $s.count = $count }
+  if ($ProgFile) { try { $pj = '[' + (($script:PROGA | ForEach-Object { $_ | ConvertTo-Json -Compress -Depth 4 }) -join ',') + ']'; [IO.File]::WriteAllText($ProgFile, $pj, (New-Object Text.UTF8Encoding($false))) } catch {} }
+}
 
 $DataDir = Join-Path $env:APPDATA 'windows-autostart-manager'
 if (-not (Test-Path $DataDir)) { New-Item -ItemType Directory -Force -Path $DataDir | Out-Null }
@@ -52,6 +62,7 @@ function Get-State {
   $cfg = Load-Cfg
   $items = New-Object System.Collections.ArrayList
   # 1) startup commands (registry Run + startup folders)
+  Stage 'startup' '注册表 Run 键与启动文件夹' 'run'
   try {
     foreach ($sc in (Get-CimInstance Win32_StartupCommand)) {
       $loc = '' + $sc.Location; $source = 'other'
@@ -84,12 +95,16 @@ function Get-State {
     }
   }
   # 2) non-svchost services
+  Stage 'startup' '注册表 Run 键与启动文件夹' 'done' $items.Count
+  Stage 'services' 'Windows 服务' 'run'
   foreach ($s in (Get-CimInstance Win32_Service)) {
     if (-not $s.PathName) { continue }
     if ($s.PathName -match 'System32\\|SysWOW64\\|windir' -and $s.PathName -notmatch 'DriverStore|sppsvc') { continue }
     [void]$items.Add([ordered]@{ id = "svc$($s.Name)"; source = 'service'; name = '' + $s.Name; display = '' + $s.DisplayName; command = '' + $s.PathName; state = '' + $s.State; startType = '' + $s.StartMode })
   }
   # 3) user scheduled tasks with boot/logon triggers
+  Stage 'services' 'Windows 服务' 'done' (@($items | Where-Object { $_.source -eq 'service' }).Count)
+  Stage 'tasks' '计划任务' 'run'
   try {
     foreach ($t in (Get-ScheduledTask | Where-Object { $_.TaskPath -notmatch '^\\Microsoft\\' })) {
       $trg = ($t.Triggers | ForEach-Object { $_.CimClass.CimClassName }) -join ','
@@ -99,6 +114,8 @@ function Get-State {
     }
   } catch {}
   # processes + elevation
+  Stage 'tasks' '计划任务' 'done' (@($items | Where-Object { $_.source -eq 'task' }).Count)
+  Stage 'procs' '进程运行状态' 'run'
   $procs = @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name, CommandLine)
   $selfSet = New-Object 'System.Collections.Generic.HashSet[int]'
   [void]$selfSet.Add($PID)
@@ -131,6 +148,7 @@ function Get-State {
     if ($it.source -eq 'service') { $it.running = ('' + $it.state -eq 'Running') }
     else { $pids = Match-Pids $it $procs $selfSet; $it.running = (@($pids).Count -gt 0); $it.pids = @($pids) }
   }
+  Stage 'procs' '进程运行状态' 'done' (@($items | Where-Object { $_.running }).Count)
   $itemsJson = '[' + ((@($items) | ForEach-Object { $_ | ConvertTo-Json -Depth 8 -Compress }) -join ',') + ']'
   $rest = [ordered]@{
     groups      = $groups
@@ -285,11 +303,23 @@ function Invoke-Action($body) {
   }
 }
 
+# ---------- 扫描子进程模式 ----------
+if ($Scan) {
+  try {
+    $json = Get-State
+    [IO.File]::WriteAllText($OutFile, $json, (New-Object Text.UTF8Encoding($false)))
+  } catch {}
+  exit
+}
+
 # ---------- HTTP ----------
 if ($args.Count -ge 2 -and $args[0] -eq '--takeover') {
   try { Stop-Process -Id ([int]$args[1]) -Force -ErrorAction SilentlyContinue } catch {}
   Start-Sleep -Milliseconds 700
 }
+$ScanOut = Join-Path $env:TEMP 'wam-scan.json'
+$ScanProg = Join-Path $env:TEMP 'wam-progress.json'
+Remove-Item $ScanOut, $ScanProg -Force -ErrorAction SilentlyContinue
 $listener = $null
 $port = 0
 foreach ($p in 28788..28808) {
@@ -310,8 +340,22 @@ while ($listener.IsListening) {
     if ($path -eq '/') {
       $bytes = [Text.Encoding]::UTF8.GetBytes((Get-Content $UiFile -Raw -Encoding UTF8))
       $res.ContentType = 'text/html; charset=utf-8'
+    } elseif ($path -eq '/api/progress') {
+      $txt = '[]'
+      if (Test-Path $ScanProg) { try { $txt = [IO.File]::ReadAllText($ScanProg) } catch {} }
+      $bytes = [Text.Encoding]::UTF8.GetBytes($txt)
+      $res.ContentType = 'application/json; charset=utf-8'
     } elseif ($path -eq '/api/state') {
-      $bytes = [Text.Encoding]::UTF8.GetBytes((Get-State))
+      if (Test-Path $ScanOut) {
+        $txt = [IO.File]::ReadAllText($ScanOut); Remove-Item $ScanOut -Force
+        $bytes = [Text.Encoding]::UTF8.GetBytes($txt)
+      } elseif ($Global:ScanProc -and -not $Global:ScanProc.HasExited) {
+        $res.StatusCode = 202; $bytes = [Text.Encoding]::UTF8.GetBytes('{}')
+      } else {
+        Remove-Item $ScanProg -Force -ErrorAction SilentlyContinue
+        $Global:ScanProc = Start-Process powershell -PassThru -WindowStyle Hidden -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath, '-Scan', '-ProgFile', $ScanProg, '-OutFile', $ScanOut
+        $res.StatusCode = 202; $bytes = [Text.Encoding]::UTF8.GetBytes('{}')
+      }
       $res.ContentType = 'application/json; charset=utf-8'
     } elseif ($path -eq '/api/action' -and $req.HttpMethod -eq 'POST') {
       $reader = New-Object IO.StreamReader($req.InputStream, [Text.Encoding]::UTF8)

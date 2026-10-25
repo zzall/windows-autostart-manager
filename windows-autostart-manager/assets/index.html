@@ -61,7 +61,7 @@ select{background:var(--panel2);color:var(--tx);border:1px solid var(--line);bor
   <div class="tab" data-v="groups">分组管理</div>
   <div class="tab" data-v="all">全部项目</div>
 </div>
-<div id="view"><div class="loading"><div class="spin"></div>首次扫描中，约需 5～10 秒…<div style="font-size:12px;margin-top:6px">正在读取注册表、启动文件夹、计划任务与 Windows 服务</div></div></div>
+<div id="view"><div class="loading"><div class="spin"></div>正在扫描，完成一项亮一项…<div style="margin-top:16px;display:inline-block;text-align:left;font-size:13px"><div style="padding:4px 0;color:var(--dim)">○ 注册表 Run 键与启动文件夹</div><div style="padding:4px 0;color:var(--dim)">○ Windows 服务</div><div style="padding:4px 0;color:var(--dim)">○ 计划任务</div><div style="padding:4px 0;color:var(--dim)">○ 进程运行状态</div></div></div></div>
 <div id="toast"></div>
 <div id="mask"><div id="box"></div></div>
 <script>
@@ -70,10 +70,28 @@ const MASK=/[?&]mask=1/.test(location.search);
 const maskCmd=s=>{s=String(s||'');return s.length<=8?'＊＊＊＊':esc(s.slice(0,8))+'＊＊＊＊＊＊＊'+(s.match(/\.\w+$/)||[''])[0]};
 let filter='全部',tagFilter='全部';
 const $=s=>document.querySelector(s);
+function renderProg(a){
+  const ic=s=>s==='done'?'<span style="color:var(--ok)">✓</span>':s==='run'?'<span style="color:var(--acc)">⟳</span>':'<span style="color:var(--dim)">○</span>';
+  return '<div class="loading"><div class="spin"></div>正在扫描，完成一项亮一项…<div style="margin-top:16px;display:inline-block;text-align:left;font-size:13px">'+
+    a.map(x=>`<div style="padding:4px 0">${ic(x.state)} ${esc(x.label)}${x.state==='done'?`　<b style="color:var(--ok)">${x.count||0} 项</b>`:''}</div>`).join('')+'</div></div>';
+}
 async function refresh(){
   const pe=$('#perm'); if(pe&&S.items.length)pe.innerHTML='<span class="scan-tip">⟳ 重新扫描中…</span>';
+  const timer=setInterval(async()=>{
+    if(S.items.length)return;
+    if(document.querySelector('#view table'))return;
+    try{const a=await (await fetch('/api/progress')).json(); if(Array.isArray(a)&&a.length&&!S.items.length&&!document.querySelector('#view table'))$('#view').innerHTML=renderProg(a);}catch(e){}
+  },600);
   let S2;
-  try{S2=await (await fetch('/api/state')).json();}catch(e){$('#perm').innerHTML='<span style="color:var(--warn)">服务正在以管理员身份重启…授权 UAC 后 3 秒刷新本页</span>';return;}
+  try{
+    for(let i=0;i<60;i++){
+      const r=await fetch('/api/state');
+      if(r.status===202){await new Promise(s=>setTimeout(s,700));continue}
+      S2=await r.json();break;
+    }
+  }catch(e){clearInterval(timer);$('#perm').innerHTML='<span style="color:var(--warn)">服务正在以管理员身份重启…授权 UAC 后 3 秒刷新本页</span>';return}
+  clearInterval(timer);
+  if(!S2){$('#perm').innerHTML='<span style="color:var(--bad)">扫描超时，请刷新页面重试</span>';return}
   S=S2;render();
   const el=$('#perm');
   if(el)el.innerHTML=S.elevated?'<span class="st-on">● 管理员权限</span>':'<span style="color:var(--warn)">▲ 普通权限：计划任务/服务操作会被拒</span> <button class="mini" onclick="act({op:\'relaunch-elevated\'})">申请管理员权限（弹一次UAC）</button>';

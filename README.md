@@ -10,6 +10,10 @@ npx skills add zzall/windows-autostart-manager@windows-autostart-manager
 
 ## 界面截图
 
+渐进式扫描（每完成一类立刻打勾报数，不白屏干等）：
+
+![渐进式扫描](images/05-渐进式扫描.png)
+
 智能梳理（自动分四类，带启动类型与标签）：
 
 ![智能梳理](images/01-智能梳理.png)

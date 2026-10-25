@@ -73,7 +73,15 @@ const RUN_KEY_HKLM = 'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
 const STARTUP_DIR = process.env.APPDATA + '\\Microsoft\\Windows\\Start Menu\\Programs\\Startup';
 const STARTUP_OFF = path.join(STARTUP_DIR, '_已关闭自启');
 
+globalThis.PROGRESS = [];
+function stage(key, label, state, count) {
+  let s = globalThis.PROGRESS.find(x => x.key === key);
+  if (!s) { s = { key, label }; globalThis.PROGRESS.push(s); }
+  s.state = state; if (count !== undefined) s.count = count;
+}
 async function scan() {
+  globalThis.PROGRESS = [];
+  stage('startup', '注册表 Run 键与启动文件夹', 'run');
   const cfg = loadConfig();
   const items = [];
   try {
@@ -107,6 +115,8 @@ async function scan() {
         items.push({ id: `startup-folder-off:${f.Name}`, source: 'startup-folder-off', name: f.Name, file: f.Name, command: '(已移出到 _已关闭自启 文件夹)' });
     } catch (e) {}
   }
+  stage('startup', '注册表 Run 键与启动文件夹', 'done', items.length);
+  stage('services', 'Windows 服务', 'run');
   try {
     const j = JSON.parse(await ps(`Get-CimInstance Win32_Service | Where-Object {$_.PathName -notmatch 'svchost'} | Select-Object Name,DisplayName,State,StartMode,PathName | ConvertTo-Json -Depth 2`));
     for (const s of (Array.isArray(j) ? j : [j]).filter(Boolean)) {
@@ -115,12 +125,16 @@ async function scan() {
       items.push({ id: `service:${s.Name}`, source: 'service', name: s.Name, display: s.DisplayName, command: s.PathName, state: s.State, startType: s.StartMode });
     }
   } catch (e) { items.push({ id: 'error:svc', source: 'error', name: '扫描服务失败', command: String(e).slice(0, 200) }); }
+  stage('services', 'Windows 服务', 'done', items.filter(i => i.source === 'service').length);
+  stage('tasks', '计划任务', 'run');
   try {
     const j = JSON.parse(await ps(`Get-ScheduledTask | Where-Object {$_.TaskPath -notmatch '^\\\\Microsoft\\\\'} | ForEach-Object { $t=$_; $trg=($t.Triggers | ForEach-Object {$_.CimClass.CimClassName}) -join ','; if($trg -match 'Boot|Logon'){ [PSCustomObject]@{Task=$t.TaskName; State=$t.State; Trig=$trg; Exec=(($t.Actions | ForEach-Object {$_.Execute + ' ' + $_.Arguments}) -join ' | ')} } } | ConvertTo-Json -Depth 2`));
     for (const t of (Array.isArray(j) ? j : [j]).filter(Boolean)) {
       items.push({ id: `task:${t.Task}`, source: 'task', name: t.Task, command: (t.Exec || '').trim(), state: String(t.State), trigger: t.Trig || '' });
     }
   } catch (e) { items.push({ id: 'error:task', source: 'error', name: '扫描计划任务失败', command: String(e).slice(0, 200) }); }
+  stage('tasks', '计划任务', 'done', items.filter(i => i.source === 'task').length);
+  stage('procs', '进程运行状态', 'run');
 
   let elevated = false;
   try { elevated = (await ps(`([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)`)).trim() === 'True'; } catch (e) {}
@@ -152,6 +166,7 @@ async function scan() {
     if (it.source === 'service') it.running = it.state === 'Running';
     else { const pids = matchPids(it); it.running = pids.length > 0; it.pids = pids; }
   }
+  stage('procs', '进程运行状态', 'done', items.filter(i => i.running).length);
   return { groups, disabledRun: cfg.disabledRun || {}, elevated, advanced: !!cfg.advanced, items };
 }
 
@@ -283,6 +298,10 @@ async function handle(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   try {
     if (url.pathname === '/') { res.setHeader('Content-Type', 'text/html; charset=utf-8'); return res.end(readFileSync(UI_FILE, 'utf8')); }
+    if (url.pathname === '/api/progress') {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      return res.end(JSON.stringify(globalThis.PROGRESS));
+    }
     if (url.pathname === '/api/state') {
       const data = await scan();
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
