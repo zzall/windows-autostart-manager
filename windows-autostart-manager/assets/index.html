@@ -62,6 +62,8 @@ select{background:var(--panel2);color:var(--tx);border:1px solid var(--line);bor
 <div id="mask"><div id="box"></div></div>
 <script>
 let S={items:[],groups:{},disabledRun:{}};
+const MASK=/[?&]mask=1/.test(location.search);
+const maskCmd=s=>{s=String(s||'');return s.length<=8?'＊＊＊＊':esc(s.slice(0,8))+'＊＊＊＊＊＊＊'+(s.match(/\.\w+$/)||[''])[0]};
 let filter='全部',tagFilter='全部';
 const $=s=>document.querySelector(s);
 async function refresh(){
@@ -202,7 +204,7 @@ function itemRow(it){
   return `<tr><td><b>${esc(it.name)}</b>${it.display&&it.display!==it.name?`<div class="muted" style="font-size:11px">${esc(it.display)}</div>`:''}<div style="margin-top:3px">${tagChips(it)}</div></td>
   <td>${srcBadge(it)}${statusOf(it)}</td>
   <td style="white-space:nowrap">${esc(it.startupType||'')}</td>
-  <td class="cmd">${esc((it.command||'').slice(0,140))}</td><td style="min-width:240px">${btns}${stop}${launch}</td></tr>`;
+  <td class="cmd">${MASK?maskCmd(it.command):esc((it.command||'').slice(0,140))}</td><td style="min-width:240px">${btns}${stop}${launch}</td></tr>`;
 }
 function withIdx(items){items.forEach((it,i)=>{it._i=i;window['_it'+i]=it;});return items;}
 function ja(x){return esc(JSON.stringify(x));}
@@ -286,10 +288,12 @@ function renderAll(){
   <div style="margin:8px 0">${tabs}</div><div style="margin:0 0 8px">标签：${tags}</div>
   <table>${THEAD}${withIdx(list).map(itemRow).join('')}</table></div>`;
 }
-let view='suggest';
+let view=location.hash==='#groups'||location.hash==='#confirm'?'groups':location.hash==='#all'?'all':'suggest';
 function render(){
   $('#view').innerHTML = view==='suggest'?renderSuggest():view==='groups'?renderGroups():renderAll();
   document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.v===view));
+  if(location.hash==='#confirm'&&!window.__demoShown){window.__demoShown=true;
+    confirmBox({title:'删除「搜狗语音输入法」的自启动？',info:'将从注册表 HKCU Run 键删除该值（自动备份，可在此界面恢复）。',warn:null,okText:'确认删除',onOk:()=>{}});}
 }
 document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{view=t.dataset.v;render();});
 refresh();
