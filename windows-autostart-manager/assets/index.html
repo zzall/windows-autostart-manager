@@ -259,7 +259,7 @@ function renderSuggest(){
   for(const it of S.items){
     if(it.source==='service'&&it.startType!=='Auto')continue;
     if(it.source==='error'){buckets.optional.push(it);continue;}
-    buckets[it.suggestion||guess(it)].push(it);
+    const g=it.suggestion||guess(it);(buckets[g]||buckets.optional).push(it);
   }
   return Object.entries(SUG).map(([k,c])=>{
     const list=buckets[k];if(!list.length)return '';
