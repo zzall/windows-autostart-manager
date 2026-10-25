@@ -303,7 +303,7 @@ async function handle(req, res) {
       return res.end(JSON.stringify(globalThis.PROGRESS));
     }
     if (url.pathname === '/api/state') {
-      const data = await scan();
+      const data = await (globalThis.__scanP || (globalThis.__scanP = scan().finally(() => { const p = globalThis.__scanP; setTimeout(() => { if (globalThis.__scanP === p) globalThis.__scanP = null; }, 50); })).catch(e => { globalThis.__scanP = null; throw e; }));
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
       return res.end(JSON.stringify(data));
     }
