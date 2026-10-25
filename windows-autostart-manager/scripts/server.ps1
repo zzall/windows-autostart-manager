@@ -43,6 +43,7 @@ function Match-Pids($it, $procs, $selfSet) {
   } else {
     $tg = Get-Targets ($it.command)
     $key = if ($tg[0]) { $tg[0] } elseif ($tg[1]) { $tg[1] } else { return @() }
+    if (-not $tg[0] -and $tg[1] -match '^(powershell|cmd|wscript|cscript|bash|sh|conhost|explorer)\.exe$') { return @() }
     $nk = Norm $key; $parts = $nk -split '\\'
     $base = $parts[-1]
     $tail2 = ($parts | Select-Object -Last 2) -join '\'

@@ -56,7 +56,7 @@ function matchPids(it) {
     if (!key) return [];
     nk = norm(key); base = nk.split('\\').pop();
     tail2 = nk.split('\\').slice(-2).join('\\');
-    byName = !script && !!exe;
+    byName = !script && !!exe && exe.includes('\\');
   }
   return PROCS.filter(p => {
     if ((globalThis.__SELF || new Set()).has(p.ProcessId)) return false;
